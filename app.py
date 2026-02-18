@@ -1,0 +1,77 @@
+import streamlit as st
+from engine import process_files, generate_final_csv, FINALIDAD_MAP
+
+st.set_page_config(layout="wide")
+st.title("Generador oficial CSV NRUA")
+
+nrua_input = st.text_input("Introduce NRUA (si varios separados por coma)")
+year_target = st.number_input("Año a generar", min_value=2000, max_value=2100, value=2025)
+
+uploaded_files = st.file_uploader(
+    "Sube archivos CSV o XLS/XLSX",
+    type=["csv","xls","xlsx"],
+    accept_multiple_files=True
+)
+
+finalidad_mode = st.radio(
+    "Asignación de finalidad",
+    ["Asignar una finalidad a todas", "Asignar manualmente"]
+)
+
+finalidad_global = None
+
+if finalidad_mode == "Asignar una finalidad a todas":
+    finalidad_global = st.selectbox(
+        "Selecciona finalidad",
+        list(FINALIDAD_MAP.keys()),
+        format_func=lambda x: f"{x} - {FINALIDAD_MAP[x]}"
+    )
+
+if uploaded_files and nrua_input:
+
+    nruas = [x.strip() for x in nrua_input.split(",")]
+
+    df, errors, overlaps = process_files(uploaded_files, nruas, year_target)
+
+    if errors:
+        st.error("Errores detectados:")
+        for e in errors:
+            st.write("•", e)
+
+    if overlaps:
+        st.warning("Posibles solapamientos detectados:")
+        for o in overlaps:
+            st.write("•", o)
+
+    if not df.empty:
+
+        if finalidad_mode == "Asignar manualmente":
+            df["finalidad"] = st.selectbox(
+                "Finalidad para todas las filas",
+                list(FINALIDAD_MAP.keys()),
+                format_func=lambda x: f"{x} - {FINALIDAD_MAP[x]}"
+            )
+
+        st.subheader("Vista previa editable")
+        edited_df = st.data_editor(df, num_rows="dynamic")
+
+        if st.button("Validar y Generar CSV"):
+
+            final_csv, validation_errors = generate_final_csv(
+                edited_df,
+                finalidad_global
+            )
+
+            if validation_errors:
+                st.error("Errores en validación:")
+                for e in validation_errors:
+                    st.write("•", e)
+            else:
+                st.success("CSV generado correctamente")
+
+                st.download_button(
+                    "Descargar CSV",
+                    final_csv,
+                    file_name="reservas_nrua.csv",
+                    mime="text/csv"
+                )
