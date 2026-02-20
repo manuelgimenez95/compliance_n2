@@ -8,12 +8,13 @@ from datetime import datetime
 from engine import process_files, generate_final_csv, FINALIDAD_MAP
 
 st.set_page_config(layout="wide")
+st.title("Generador oficial CSV NRUA")
 
 # ---------------------------------------------------
-# Guardar lead robusto
+# GUARDAR LEAD
 # ---------------------------------------------------
 
-def save_lead(email, tipo_analisis):
+def save_lead(email):
 
     if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
         return False
@@ -35,46 +36,36 @@ def save_lead(email, tipo_analisis):
         sheet.append_row([
             datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             email,
-            tipo_analisis
+            "Generador CSV NRUA"
         ])
 
         return True
 
-    except Exception as e:
-        st.error("Error guardando lead. Revisa GOOGLE_CREDENTIALS o permisos.")
+    except:
+        st.error("Error guardando lead.")
         return False
 
 # ---------------------------------------------------
-# Interfaz
+# FORMULARIO PRINCIPAL
 # ---------------------------------------------------
 
-st.title("Generador oficial CSV NRUA")
-
-nrua_input = st.text_input("Introduce NRUA (si varios separados por coma)")
-year_target = st.number_input("Año", min_value=2000, max_value=2100, value=2025)
+nrua_input = st.text_input("Introduce NRUA")
+year_target = st.number_input("Año", 2000, 2100, 2025)
 
 uploaded_files = st.file_uploader(
-    "Sube archivos CSV o XLS/XLSX",
+    "Sube archivos CSV, XLS o XLSX",
     type=["csv","xls","xlsx"],
     accept_multiple_files=True
 )
 
-finalidad_mode = st.radio(
-    "Asignación de finalidad",
-    ["Asignar una finalidad a todas", "Asignar manualmente"]
+finalidad_global = st.selectbox(
+    "Finalidad",
+    list(FINALIDAD_MAP.keys()),
+    format_func=lambda x: f"{x} - {FINALIDAD_MAP[x]}"
 )
 
-finalidad_global = None
-
-if finalidad_mode == "Asignar una finalidad a todas":
-    finalidad_global = st.selectbox(
-        "Selecciona finalidad",
-        list(FINALIDAD_MAP.keys()),
-        format_func=lambda x: f"{x} - {FINALIDAD_MAP[x]}"
-    )
-
 # ---------------------------------------------------
-# Procesamiento
+# PROCESAR ARCHIVOS
 # ---------------------------------------------------
 
 if uploaded_files and nrua_input:
@@ -89,38 +80,16 @@ if uploaded_files and nrua_input:
             st.write("•", e)
 
     if overlaps:
-        st.warning("Posibles solapamientos detectados:")
+        st.warning("Posibles solapamientos:")
         for o in overlaps:
             st.write("•", o)
 
     if not df.empty:
 
-        if finalidad_mode == "Asignar manualmente":
-            df["finalidad"] = st.selectbox(
-                "Finalidad",
-                list(FINALIDAD_MAP.keys()),
-                format_func=lambda x: f"{x} - {FINALIDAD_MAP[x]}"
-            )
-
         st.subheader("Vista previa")
         edited_df = st.data_editor(df, num_rows="dynamic")
 
-        st.markdown("---")
-        st.subheader("Para descargar el CSV debes completar tus datos")
-
-        email = st.text_input("Correo electrónico")
-        consent = st.checkbox("Acepto la política de privacidad")
-
-        if st.button("Validar, Guardar Lead y Generar CSV"):
-
-            if not email or not consent:
-                st.error("Debes completar el formulario y aceptar la política.")
-                st.stop()
-
-            lead_saved = save_lead(email, "Generador CSV NRUA")
-
-            if not lead_saved:
-                st.stop()
+        if st.button("Validar y Generar CSV"):
 
             final_csv, validation_errors = generate_final_csv(
                 edited_df,
@@ -128,15 +97,33 @@ if uploaded_files and nrua_input:
             )
 
             if validation_errors:
-                st.error("Errores en validación:")
+                st.error("Errores:")
                 for e in validation_errors:
                     st.write("•", e)
             else:
+                st.session_state["csv_ready"] = final_csv
                 st.success("CSV generado correctamente")
 
+# ---------------------------------------------------
+# DESCARGA (SOLO SI CSV LISTO)
+# ---------------------------------------------------
+
+if "csv_ready" in st.session_state:
+
+    st.markdown("---")
+    st.subheader("Introduce tu correo para descargar")
+
+    email = st.text_input("Correo electrónico")
+
+    if st.button("Descargar CSV"):
+
+        if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
+            st.error("Correo electrónico no válido.")
+        else:
+            if save_lead(email):
                 st.download_button(
-                    "Descargar CSV",
-                    final_csv,
+                    "Descargar archivo",
+                    st.session_state["csv_ready"],
                     file_name="reservas_nrua.csv",
                     mime="text/csv"
                 )
