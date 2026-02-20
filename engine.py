@@ -12,13 +12,11 @@ FINALIDAD_MAP = {
 }
 
 # ---------------------------------------------------
-# Normalización segura
+# Normalización
 # ---------------------------------------------------
 
 def clean_header(col):
-    col = str(col)
-    col = col.lower()
-    col = col.replace("Ã³", "ó").replace("Ã±", "ñ")
+    col = str(col).lower()
     col = re.sub(r"[^a-z0-9ñáéíóú ]", "", col)
     return col.strip()
 
@@ -31,37 +29,42 @@ def detect_column(df, keywords):
     return None
 
 # ---------------------------------------------------
-# Detección exacta de formato fecha
+# Fechas robustas
 # ---------------------------------------------------
 
-def detect_date_format(value):
-    value = str(value).strip()
-
-    patterns = {
-        r"^\d{2}/\d{2}/\d{4}$": "%d/%m/%Y",
-        r"^\d{2}-\d{2}-\d{4}$": "%d-%m-%Y",
-        r"^\d{2}\.\d{2}\.\d{4}$": "%d.%m.%Y",
-        r"^\d{4}-\d{2}-\d{2}$": "%Y-%m-%d"
-    }
-
-    for pattern, fmt in patterns.items():
-        if re.match(pattern, value):
-            return fmt
-
-    return None
-
 def robust_parse_column(series):
-    first_valid = series.dropna().astype(str).iloc[0]
-    fmt = detect_date_format(first_valid)
-
-    if fmt:
-        return pd.to_datetime(series, format=fmt, errors="coerce")
-
-    # fallback controlado
     return pd.to_datetime(series, dayfirst=True, errors="coerce")
 
 # ---------------------------------------------------
-# Procesamiento
+# Filtro canceladas
+# ---------------------------------------------------
+
+def remove_cancelled(df):
+
+    status_col = detect_column(df, ["status"])
+    estado_col = detect_column(df, ["estado"])
+
+    if status_col:
+        df = df[
+            ~df[status_col]
+            .astype(str)
+            .str.lower()
+            .str.strip()
+            .eq("cancelled")
+        ]
+
+    if estado_col:
+        df = df[
+            ~df[estado_col]
+            .astype(str)
+            .str.lower()
+            .str.contains("cancelación|cancelada|antiguo", regex=True)
+        ]
+
+    return df
+
+# ---------------------------------------------------
+# Procesamiento principal
 # ---------------------------------------------------
 
 def process_files(files, nruas, year_target):
@@ -75,19 +78,26 @@ def process_files(files, nruas, year_target):
         try:
             if file.name.endswith(".csv"):
                 df = pd.read_csv(file)
+            elif file.name.endswith(".xlsx"):
+                df = pd.read_excel(file, engine="openpyxl")
+            elif file.name.endswith(".xls"):
+                df = pd.read_excel(file, engine="xlrd")
             else:
-                df = pd.read_excel(file)
-        except:
+                errors.append(f"{file.name}: Formato no soportado")
+                continue
+        except Exception as e:
             errors.append(f"{file.name}: No se pudo leer el archivo")
             continue
 
-        checkin_col = detect_column(df, ["entrada","checkin","fecha de inicio","start"])
-        checkout_col = detect_column(df, ["salida","checkout","fecha de final","end"])
+        df = remove_cancelled(df)
 
+        checkin_col = detect_column(df, ["entrada","checkin","inicio"])
+        checkout_col = detect_column(df, ["salida","checkout","final"])
+
+        guests_col = detect_column(df, ["personas","guests"])
         adults_col = detect_column(df, ["adult"])
         children_col = detect_column(df, ["niñ","child"])
         babies_col = detect_column(df, ["beb","infant"])
-        guests_col = detect_column(df, ["personas","guests"])
 
         if not checkin_col or not checkout_col:
             errors.append(f"{file.name}: No se detectaron columnas de fechas")
@@ -97,17 +107,12 @@ def process_files(files, nruas, year_target):
         df["checkout"] = robust_parse_column(df[checkout_col])
 
         df = df.dropna(subset=["checkin","checkout"])
+        df = df[df["checkout"] > df["checkin"]]
 
-        # Validación lógica
-        df = df[df["checkout"] >= df["checkin"]]
-
-        # Filtro año exacto
         df = df[
-            (df["checkin"].dt.year == year_target) &
-            (df["checkout"].dt.year == year_target)
+            (df["checkin"].dt.year == year_target)
         ]
 
-        # Huéspedes
         if guests_col:
             df["guests"] = pd.to_numeric(df[guests_col], errors="coerce")
         else:
@@ -118,8 +123,7 @@ def process_files(files, nruas, year_target):
                 total += pd.to_numeric(df[children_col], errors="coerce").fillna(0)
             if babies_col:
                 total += pd.to_numeric(df[babies_col], errors="coerce").fillna(0)
-
-            df["guests"] = total if isinstance(total, pd.Series) else np.nan
+            df["guests"] = total
 
         df["NRUA"] = nruas[0] if len(nruas)==1 else None
 
@@ -130,7 +134,7 @@ def process_files(files, nruas, year_target):
 
     final_df = pd.concat(all_rows).sort_values("checkin").reset_index(drop=True)
 
-    # Solapamientos reales (no cuenta salida == entrada)
+    # Solapamientos reales (checkout NO cuenta como solape)
     for i in range(len(final_df)-1):
         if final_df.loc[i,"checkout"] > final_df.loc[i+1,"checkin"]:
             overlaps.append(
@@ -140,7 +144,7 @@ def process_files(files, nruas, year_target):
     return final_df, errors, overlaps
 
 # ---------------------------------------------------
-# Generación CSV FINAL OFICIAL
+# Generación CSV final
 # ---------------------------------------------------
 
 def generate_final_csv(df, finalidad_global):
@@ -162,16 +166,9 @@ def generate_final_csv(df, finalidad_global):
     if errors:
         return None, errors
 
-    # Formato fecha PERMITIDO (dd/MM/yyyy)
     df["checkin"] = pd.to_datetime(df["checkin"]).dt.strftime("%d/%m/%Y")
     df["checkout"] = pd.to_datetime(df["checkout"]).dt.strftime("%d/%m/%Y")
 
     output = df[required]
 
-    csv_buffer = output.to_csv(
-        sep=";",
-        index=False,
-        header=False
-    )
-
-    return csv_buffer, []
+    return output.to_csv(sep=";", index=False, header=False), []
