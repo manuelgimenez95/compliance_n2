@@ -1,7 +1,7 @@
 import pandas as pd
 import numpy as np
 import re
-from datetime import datetime
+import io
 
 FINALIDAD_MAP = {
     1: "Vacacional/Turístico",
@@ -12,7 +12,7 @@ FINALIDAD_MAP = {
 }
 
 # ---------------------------------------------------
-# Normalización
+# UTILIDADES
 # ---------------------------------------------------
 
 def clean_header(col):
@@ -28,15 +28,34 @@ def detect_column(df, keywords):
                 return col
     return None
 
-# ---------------------------------------------------
-# Fechas robustas
-# ---------------------------------------------------
+def robust_read_file(file):
+
+    content = file.read()
+    file.seek(0)
+
+    try:
+        if file.name.endswith(".csv"):
+            return pd.read_csv(io.BytesIO(content))
+    except:
+        pass
+
+    try:
+        return pd.read_excel(io.BytesIO(content), engine="openpyxl")
+    except:
+        pass
+
+    try:
+        return pd.read_excel(io.BytesIO(content), engine="xlrd")
+    except:
+        pass
+
+    raise ValueError("Formato no soportado o archivo corrupto")
 
 def robust_parse_column(series):
     return pd.to_datetime(series, dayfirst=True, errors="coerce")
 
 # ---------------------------------------------------
-# Filtro canceladas
+# FILTRO CANCELADAS
 # ---------------------------------------------------
 
 def remove_cancelled(df):
@@ -46,8 +65,7 @@ def remove_cancelled(df):
 
     if status_col:
         df = df[
-            ~df[status_col]
-            .astype(str)
+            ~df[status_col].astype(str)
             .str.lower()
             .str.strip()
             .eq("cancelled")
@@ -55,8 +73,7 @@ def remove_cancelled(df):
 
     if estado_col:
         df = df[
-            ~df[estado_col]
-            .astype(str)
+            ~df[estado_col].astype(str)
             .str.lower()
             .str.contains("cancelación|cancelada|antiguo", regex=True)
         ]
@@ -64,7 +81,7 @@ def remove_cancelled(df):
     return df
 
 # ---------------------------------------------------
-# Procesamiento principal
+# PROCESAMIENTO
 # ---------------------------------------------------
 
 def process_files(files, nruas, year_target):
@@ -76,16 +93,8 @@ def process_files(files, nruas, year_target):
     for file in files:
 
         try:
-            if file.name.endswith(".csv"):
-                df = pd.read_csv(file)
-            elif file.name.endswith(".xlsx"):
-                df = pd.read_excel(file, engine="openpyxl")
-            elif file.name.endswith(".xls"):
-                df = pd.read_excel(file, engine="xlrd")
-            else:
-                errors.append(f"{file.name}: Formato no soportado")
-                continue
-        except Exception as e:
+            df = robust_read_file(file)
+        except:
             errors.append(f"{file.name}: No se pudo leer el archivo")
             continue
 
@@ -109,9 +118,7 @@ def process_files(files, nruas, year_target):
         df = df.dropna(subset=["checkin","checkout"])
         df = df[df["checkout"] > df["checkin"]]
 
-        df = df[
-            (df["checkin"].dt.year == year_target)
-        ]
+        df = df[df["checkin"].dt.year == year_target]
 
         if guests_col:
             df["guests"] = pd.to_numeric(df[guests_col], errors="coerce")
@@ -134,7 +141,6 @@ def process_files(files, nruas, year_target):
 
     final_df = pd.concat(all_rows).sort_values("checkin").reset_index(drop=True)
 
-    # Solapamientos reales (checkout NO cuenta como solape)
     for i in range(len(final_df)-1):
         if final_df.loc[i,"checkout"] > final_df.loc[i+1,"checkin"]:
             overlaps.append(
@@ -144,7 +150,7 @@ def process_files(files, nruas, year_target):
     return final_df, errors, overlaps
 
 # ---------------------------------------------------
-# Generación CSV final
+# GENERACIÓN CSV
 # ---------------------------------------------------
 
 def generate_final_csv(df, finalidad_global):
