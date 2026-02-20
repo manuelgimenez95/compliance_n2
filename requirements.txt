@@ -40,5 +40,7 @@ urllib3==2.6.3
 watchdog==6.0.0
 uvicorn
 fastapi
+gspread
+oauth2client
 
 
