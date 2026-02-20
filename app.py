@@ -8,7 +8,7 @@ from datetime import datetime
 
 
 st.set_page_config(layout="wide")
-st.title("Generador oficial CSV NRUA")
+st.title("Unifica todas tus reservas en formato válido para N2")
 
 nrua_input = st.text_input("Introduce NRUA (si varios separados por coma)")
 year_target = st.number_input("Año a generar", min_value=2000, max_value=2100, value=2025)
@@ -26,9 +26,9 @@ finalidad_mode = st.radio(
 
 finalidad_global = None
 
-if finalidad_mode == "Asignar una finalidad a todas":
+if finalidad_mode == "¿Quieres asignar una misma finalidad a todas las reservas? (Puedes editar posteriormente).":
     finalidad_global = st.selectbox(
-        "Selecciona finalidad",
+        "Selecciona la finalidad por defecto",
         list(FINALIDAD_MAP.keys()),
         format_func=lambda x: f"{x} - {FINALIDAD_MAP[x]}"
     )
@@ -127,6 +127,7 @@ if st.button("Descargar informe completo"):
             )
     else:
         st.error("Debes completar el formulario y aceptar la política.")
+
 
 
 
