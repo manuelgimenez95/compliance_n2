@@ -2,66 +2,56 @@ import streamlit as st
 import gspread
 import json
 import os
+import re
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 from engine import process_files, generate_final_csv, FINALIDAD_MAP
 
+st.set_page_config(layout="wide")
 
-# -------- FUNCIÓN PARA GUARDAR EN GOOGLE SHEETS --------
+# ---------------------------------------------------
+# Guardar lead robusto
+# ---------------------------------------------------
 
 def save_lead(email, tipo_analisis):
-    scope = [
-        "https://spreadsheets.google.com/feeds",
-        "https://www.googleapis.com/auth/drive",
-    ]
 
-    credentials_dict = json.loads(os.environ["GOOGLE_CREDENTIALS"])
-    credentials = ServiceAccountCredentials.from_json_keyfile_dict(
-        credentials_dict, scope
-    )
+    if not re.match(r"[^@]+@[^@]+\.[^@]+", email):
+        return False
 
-    client = gspread.authorize(credentials)
-    sheet = client.open("Leads DepositoN2").sheet1
+    try:
+        scope = [
+            "https://spreadsheets.google.com/feeds",
+            "https://www.googleapis.com/auth/drive",
+        ]
 
-    sheet.append_row([
-        datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-        email,
-        tipo_analisis
-    ])
+        credentials_dict = json.loads(os.environ["GOOGLE_CREDENTIALS"])
+        credentials = ServiceAccountCredentials.from_json_keyfile_dict(
+            credentials_dict, scope
+        )
 
-# -------- INTERFAZ --------
+        client = gspread.authorize(credentials)
+        sheet = client.open("Leads DepositoN2").sheet1
 
-st.subheader("Vista preliminar completada")
+        sheet.append_row([
+            datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            email,
+            tipo_analisis
+        ])
 
-st.info("Para descargar el informe completo, introduce tu correo electrónico.")
+        return True
 
-email = st.text_input("Correo electrónico")
-consent = st.checkbox("Acepto la política de privacidad de datos.")
+    except Exception as e:
+        st.error("Error guardando lead. Revisa GOOGLE_CREDENTIALS o permisos.")
+        return False
 
-if st.button("Descargar informe completo"):
-    if email and consent:
-        save_lead(email, "Deposito N2")
+# ---------------------------------------------------
+# Interfaz
+# ---------------------------------------------------
 
-        st.success("Informe listo para descarga")
-
-        with open("informe_generado.pdf", "rb") as f:
-            st.download_button(
-                label="Descargar PDF",
-                data=f,
-                file_name="informe_deposito_n2.pdf",
-                mime="application/pdf"
-            )
-    else:
-        st.error("Debes completar el formulario y aceptar la política.")
-
-
-
-
-st.set_page_config(layout="wide")
 st.title("Generador oficial CSV NRUA")
 
 nrua_input = st.text_input("Introduce NRUA (si varios separados por coma)")
-year_target = st.number_input("Año a generar", min_value=2000, max_value=2100, value=2025)
+year_target = st.number_input("Año", min_value=2000, max_value=2100, value=2025)
 
 uploaded_files = st.file_uploader(
     "Sube archivos CSV o XLS/XLSX",
@@ -83,6 +73,10 @@ if finalidad_mode == "Asignar una finalidad a todas":
         format_func=lambda x: f"{x} - {FINALIDAD_MAP[x]}"
     )
 
+# ---------------------------------------------------
+# Procesamiento
+# ---------------------------------------------------
+
 if uploaded_files and nrua_input:
 
     nruas = [x.strip() for x in nrua_input.split(",")]
@@ -103,15 +97,30 @@ if uploaded_files and nrua_input:
 
         if finalidad_mode == "Asignar manualmente":
             df["finalidad"] = st.selectbox(
-                "Finalidad para todas las filas",
+                "Finalidad",
                 list(FINALIDAD_MAP.keys()),
                 format_func=lambda x: f"{x} - {FINALIDAD_MAP[x]}"
             )
 
-        st.subheader("Vista previa editable")
+        st.subheader("Vista previa")
         edited_df = st.data_editor(df, num_rows="dynamic")
 
-        if st.button("Validar y Generar CSV"):
+        st.markdown("---")
+        st.subheader("Para descargar el CSV debes completar tus datos")
+
+        email = st.text_input("Correo electrónico")
+        consent = st.checkbox("Acepto la política de privacidad")
+
+        if st.button("Validar, Guardar Lead y Generar CSV"):
+
+            if not email or not consent:
+                st.error("Debes completar el formulario y aceptar la política.")
+                st.stop()
+
+            lead_saved = save_lead(email, "Generador CSV NRUA")
+
+            if not lead_saved:
+                st.stop()
 
             final_csv, validation_errors = generate_final_csv(
                 edited_df,
@@ -131,5 +140,3 @@ if uploaded_files and nrua_input:
                     file_name="reservas_nrua.csv",
                     mime="text/csv"
                 )
-
-
