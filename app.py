@@ -33,10 +33,10 @@ def save_lead(email, tipo_analisis):
 
 st.subheader("Vista preliminar completada")
 
-st.info("Para descargar el informe completo necesitamos tus datos.")
+st.info("Para descargar el informe completo, introduce tu correo electrónico.")
 
 email = st.text_input("Correo electrónico")
-consent = st.checkbox("Acepto la política de privacidad")
+consent = st.checkbox("Acepto la política de privacidad de datos.")
 
 if st.button("Descargar informe completo"):
     if email and consent:
@@ -131,4 +131,5 @@ if uploaded_files and nrua_input:
                     file_name="reservas_nrua.csv",
                     mime="text/csv"
                 )
+
 
